@@ -2,6 +2,8 @@ import pandas
 from dotenv import load_dotenv
 load_dotenv()
 import os
+import pyodbc, struct
+from azure import identity
 
 caminho_csv = os.environ["CSV_LIVROS"]
 df_livros = pandas.read_csv(caminho_csv, sep=";")
@@ -14,8 +16,11 @@ df_livros = df_livros.drop_duplicates()
 df_livros = df_livros.dropna(subset = ["isbn"])
 
 #Extrai somente o isbn, removendo o que tem a mais na coluna
-df_livros["isbn"] = df_livros["isbn"].astype("str").apply(lambda texto: texto.split(" ")[0])
+df_livros["isbn"] = df_livros["isbn"].astype("str").apply(lambda texto: texto.split("(")[0])
 df_livros["isbn"] = df_livros["isbn"].str.replace(r"[^0-9X]", "", regex=True)
+
+# Remove linhas com tamanho do isbn inválido
+df_livros = df_livros.where(df_livros["isbn"].str.len()<=13)
 df_livros = df_livros.drop_duplicates(subset="isbn") #Remove duplicações com mesmo isbn
 
 # Tratamento do título
@@ -77,3 +82,26 @@ df_livros = df_livros.merge(df_autores, how="left", on="autor", validate="m:1")
 
 # Remove o nome do autor do dataframe de livros, para ficar só o id
 df_livros = df_livros.drop(columns=["autor"])
+
+def inserir_dados():
+    # Cria a conexão com o banco de dados
+    connection_string = os.environ["AZURE_SQL_CONNECTIONSTRING"]
+    try:
+        conn = pyodbc.connect(connection_string, timeout=10)
+    except:
+        conn = pyodbc.connect(connection_string, timeout=10)
+    print("Conectado")
+    cursor = conn.cursor()
+
+    for index, linha in df_autores.iterrows():
+        cursor.execute("INSERT INTO [dbo].[AUTOR] (id,nome) values(?,?)", linha.id_autor, linha.autor)
+
+    for index, linha in df_livros.iterrows():
+        cursor.execute("INSERT INTO [dbo].[LIVRO] (ISBN,titulo,ano,id_autor) values(?,?,?,?)", linha.isbn, linha.titulo_completo, linha.ano, linha.id_autor)
+
+    conn.commit()
+    print("Dados inseridos")
+    cursor.close()
+    conn.close()
+
+inserir_dados()
